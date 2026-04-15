@@ -1,0 +1,14 @@
+{
+  "input_scale": 127.0,
+  "fc1_weight": 211.75843967685444,
+  "fc1_bias": 2344.0804578132525,
+  "fc2_weight": 246.29932901639393,
+  "fc2_bias": 1091.8336625363047,
+  "hidden_activation_scale": 4.5038853318441365,
+  "hidden_activation_max": 28.1978759765625,
+  "layer1_requant_scale": 0.00016747225793874713,
+  "layer1_requant_multiplier": 2810,
+  "layer1_requant_shift": 24,
+  "activation_calibration_source": "MNIST test set",
+  "activation_calibration_samples": 10000
+}

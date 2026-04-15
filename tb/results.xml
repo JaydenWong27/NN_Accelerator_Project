@@ -1,0 +1,13 @@
+<testsuites name="results">
+  <testsuite name="all" package="all">
+    <property name="random_seed" value="1776084688" />
+    <testcase name="test_directed" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="17" time="0.0005848407745361328" sim_time_ns="50.0" ratio_time="85493.35507541786" />
+    <testcase name="test_signed_multiply" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="43" time="0.0002129077911376953" sim_time_ns="40.00000000000001" ratio_time="187874.75923852186" />
+    <testcase name="test_random_operations" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="61" time="0.006767988204956055" sim_time_ns="2020.0" ratio_time="298463.87712685385" />
+    <testcase name="test_signed_edge_cases" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="88" time="0.001119375228881836" sim_time_ns="340.0" ratio_time="303740.86474973377" />
+    <testcase name="test_reset_mid_computation" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="122" time="0.0003540515899658203" sim_time_ns="110.0" ratio_time="310689.18518518517" />
+    <testcase name="test_enable_gate" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="152" time="0.000225067138671875" sim_time_ns="60.0" ratio_time="266587.1186440678" />
+    <testcase name="test_accumulator_passthrough" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="178" time="0.00021600723266601562" sim_time_ns="60.0" ratio_time="277768.4768211921" />
+    <testcase name="test_zero_multiplication" classname="tb_pe" file="/Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project/tb/tb_pe.py" lineno="204" time="0.0011789798736572266" sim_time_ns="380.0" ratio_time="322312.5419615774" />
+  </testsuite>
+</testsuites>
