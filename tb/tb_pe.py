@@ -277,3 +277,149 @@ async def accumulator_boundary_conditions(dut):
 @cocotb.test()
 async def test_reset_edge_cases(dut):
     """Test reset behavior in edge case scenarios"""
+    cocotb.start_soon(Clock(dut.clk,10,unit="ns").start())
+    await reset_dut(dut)
+
+    dut.en.value = 1
+    dut.activation_in.value = 5
+    dut.weight.value = 5
+    dut.acc_in.value = 0
+    await RisingEdge(dut.clk)
+    dut.rst_n.value = 0
+    await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
+    assert int(dut.acc_out.value) == 0, "1-cycle reset failed"
+    dut.rst_n.value = 1
+
+    # Case 2: reset holds for 10 cycles
+    dut.rst_n.value = 0
+    for i in range(10):
+            await RisingEdge(dut.clk)
+            assert int(dut.acc_out.value) == 0, f"Reset didn't hold on cycle {i}"
+    dut.rst_n.value = 1
+
+    # Case 3: resume after rest computes correctly
+    dut.activation_in.value = 3
+    dut.weight.value = 4
+    dut.acc_in.value = 0
+    await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
+    assert int(dut.acc_out.value) == 12, "Resume after reset failed"
+
+    # Case 4: reset ignores acc_in 
+    dut.acc_in.value = 99999
+    dut.rst_n.value = 0
+    await RisingEdge(dut.clk)
+    await RisingEdge(dut.clk)
+    assert int(dut.acc_out.value) == 0, "Reset should ignore acc_in"
+    dut.rst_n.value = 1
+
+
+@cocotb.test()
+async def test_back_to_back_pipeline(dut):
+    """Feed new inputs every clock cycle with no idle cycles between operations."""
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    await reset_dut(dut)
+
+    inputs = [(3,4), (5,6), (7,-2), (-3,-4), (127,1), (-128,-1), (0,99), (10,10)]
+    expected = [a * w for a, w in inputs] # Python calculates the ground truth
+
+    dut.en.value = 1
+    dut.acc_in.value = 0
+
+    #Feed first input before the loop
+    dut.activation_in.value = inputs[0][0] 
+    dut.weight.value = inputs[0][1]
+    await RisingEdge(dut.clk)
+
+    for i in range(1, len(inputs)):
+            dut.activation_in.value = inputs[i][0]
+            dut.weight.value = inputs[i][1]
+            await RisingEdge(dut.clk) # captures input[i], result[i-1] now readable
+
+            result = int(dut.acc_out.value)
+            if result & 0x80000000:
+                result -= 0x100000000
+            assert result == expected[i-1], \
+                f"op {i-1}: expected {expected[i-1]} got {result}"
+            
+    #Extra edge to drain the last result 
+    await RisingEdge(dut.clk)
+    result = int(dut.acc_out.value)
+    if result & 0x80000000:
+        result -= 0x100000000
+    assert result == expected[-1], \
+        f"final op: expected {expected[-1]} got {result}"
+    
+@cocotb.test()
+async def test_dot_product(dut):
+    cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+    await reset_dut(dut)
+
+    activations = [3,-1,5,2,-4,7,0,6]
+    weights = [2,4,-3,1,2,-1,8,3]
+    expected = sum(a*w for a,w in zip(activations, weights))
+
+    dut.en.value = 1
+    acc = 0 # track accumulator in python too
+
+    for a, w in zip (activations, weights):
+        dut.activation_in.value = a
+        dut.weight.value = w
+        dut.acc_in.value = acc # feed previous result back in 
+        await RisingEdge(dut.clk)
+        await RisingEdge(dut.clk)
+        acc = int(dut.acc_out.value) # read result, use as next acc_in
+        if acc & 0x80000000:
+            acc -= 0x100000000
+
+    assert acc == expected, f"Dot product failed: expected {expected} got {acc}"
+
+
+
+
+@cocotb.test()
+async def test_systolic_chain(dut):
+        """simulate 3 PEs in series, activation_out of each feeds activation_in of next."""
+        cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
+        await reset_dut(dut)
+
+        #Each tuple: (activation_in, weight,acc_in)
+        #activation_in = None means use previous PE's activation out
+        chain = [
+            (5,3,0),
+            (None, -2,10),
+            (None, 4,-5),
+        ]
+
+        dut.en.value = 1
+        act = chain[0][0]
+
+        for i, (activation, weight, acc_in) in enumerate(chain):
+                if activation is not None:
+                        act = activation # first PE uses real input
+                    # else: act already holds previous PE's activation_out
+
+                dut.activation_in.value = act
+                dut.weight.value = weight
+                dut.acc_in.value = acc_in
+                await RisingEdge(dut.clk)
+                await RisingEdge(dut.clk)
+
+                # Read Activation_out should always equal activation_in 
+                act_out = int(dut.activation_out.value)
+                if act_out & 0x80:
+                    act_out -= 0x100
+                assert act_out == act, \
+                    f"PE{i+1} activation passtrhough failed: expected {act} got {act_out}"
+
+                # Read acc_out should equal acc_in + activation*weight
+                acc_out = int(dut.acc_out.value)
+                if acc_out & 0x80000000:
+                    acc_out -= 0x10000000
+                expected_acc = acc_in + act * weight
+                assert acc_out == expected_acc, \
+                    f"PE{i+1} acc failed: expected {expected_acc} got {acc_out}"
+
+                act = act_out    # pass activation_out to next PE
+                

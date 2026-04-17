@@ -1,0 +1,8 @@
+SIM = icarus
+TOPLEVEL_LANG = verilog
+VERILOG_SOURCES = $(PWD)/../rtl/pe.sv $(PWD)/../rtl/systolic_array.sv
+TOPLEVEL = systolic_array
+MODULE = systolic_array_pe
+
+COCOTB_ROOT ?= $(shell python -c "import cocotb_tools; import os; print(os.path.dirname(cocotb_tools.__file__))")
+include $(COCOTB_ROOT)/makefiles/Makefile.sim
