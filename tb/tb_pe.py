@@ -416,7 +416,7 @@ async def test_systolic_chain(dut):
                 # Read acc_out should equal acc_in + activation*weight
                 acc_out = int(dut.acc_out.value)
                 if acc_out & 0x80000000:
-                    acc_out -= 0x10000000
+                     acc_out -= 0x100000000
                 expected_acc = acc_in + act * weight
                 assert acc_out == expected_acc, \
                     f"PE{i+1} acc failed: expected {expected_acc} got {acc_out}"
