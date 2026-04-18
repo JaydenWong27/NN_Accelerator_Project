@@ -31,68 +31,114 @@ endgenerate
 //row 0: no delay
 assign act[0][0] = activation_in[0];
 
-//row 1: 1 cycle delay 
-always_ff @(posedge clk) begin 
-    skew[1][0] <= activation_in[1];
+//row 1: 1 cycle delay
+always_ff @(posedge clk) begin
+    if (!rst_n) skew[1][0] <= 8'sd0;
+    else        skew[1][0] <= activation_in[1];
 end
 assign act[1][0] = skew[1][0];
 
-//row 2: 2 cycle delay 
+//row 2: 2 cycle delay
 always_ff @(posedge clk) begin
-    skew[2][0] <= activation_in[2];
-    skew[2][1] <= skew[2][0];
+    if (!rst_n) begin
+        skew[2][0] <= 8'sd0;
+        skew[2][1] <= 8'sd0;
+    end else begin
+        skew[2][0] <= activation_in[2];
+        skew[2][1] <= skew[2][0];
+    end
 end
 assign act[2][0] = skew [2][1];
 
 //row 3: 3 cycle delay
 always_ff @(posedge clk) begin
-    skew[3][0] <= activation_in[3];
-    skew[3][1] <= skew[3][0];
-    skew[3][2] <= skew[3][1];
+    if (!rst_n) begin
+        skew[3][0] <= 8'sd0;
+        skew[3][1] <= 8'sd0;
+        skew[3][2] <= 8'sd0;
+    end else begin
+        skew[3][0] <= activation_in[3];
+        skew[3][1] <= skew[3][0];
+        skew[3][2] <= skew[3][1];
+    end
 end
 assign act[3][0] = skew [3][2];
 
 //row 4: 4 cycle delay
 always_ff @(posedge clk) begin
-    skew[4][0] <= activation_in[4];
-    skew[4][1] <= skew[4][0];
-    skew[4][2] <= skew[4][1];
-    skew[4][3] <= skew[4][2];
+    if (!rst_n) begin
+        skew[4][0] <= 8'sd0;
+        skew[4][1] <= 8'sd0;
+        skew[4][2] <= 8'sd0;
+        skew[4][3] <= 8'sd0;
+    end else begin
+        skew[4][0] <= activation_in[4];
+        skew[4][1] <= skew[4][0];
+        skew[4][2] <= skew[4][1];
+        skew[4][3] <= skew[4][2];
+    end
 end
 assign act[4][0] = skew [4][3];
 
-//row 5: 5 cycle delay 
+//row 5: 5 cycle delay
 always_ff @(posedge clk) begin
-    skew[5][0] <= activation_in[5];
-    skew[5][1] <= skew[5][0];
-    skew[5][2] <= skew[5][1];
-    skew[5][3] <= skew[5][2];
-    skew[5][4] <= skew[5][3];
+    if (!rst_n) begin
+        skew[5][0] <= 8'sd0;
+        skew[5][1] <= 8'sd0;
+        skew[5][2] <= 8'sd0;
+        skew[5][3] <= 8'sd0;
+        skew[5][4] <= 8'sd0;
+    end else begin
+        skew[5][0] <= activation_in[5];
+        skew[5][1] <= skew[5][0];
+        skew[5][2] <= skew[5][1];
+        skew[5][3] <= skew[5][2];
+        skew[5][4] <= skew[5][3];
+    end
 end
 assign act[5][0] = skew [5][4];
 
 
 //row 6: 6 cycle delay
 always_ff @(posedge clk) begin
-    skew[6][0] <= activation_in[6];
-    skew[6][1] <= skew[6][0];
-    skew[6][2] <= skew[6][1];
-    skew[6][3] <= skew[6][2];
-    skew[6][4] <= skew[6][3];
-    skew[6][5] <= skew[6][4];
+    if (!rst_n) begin
+        skew[6][0] <= 8'sd0;
+        skew[6][1] <= 8'sd0;
+        skew[6][2] <= 8'sd0;
+        skew[6][3] <= 8'sd0;
+        skew[6][4] <= 8'sd0;
+        skew[6][5] <= 8'sd0;
+    end else begin
+        skew[6][0] <= activation_in[6];
+        skew[6][1] <= skew[6][0];
+        skew[6][2] <= skew[6][1];
+        skew[6][3] <= skew[6][2];
+        skew[6][4] <= skew[6][3];
+        skew[6][5] <= skew[6][4];
+    end
 end
 assign act[6][0] = skew [6][5];
 
 
 //row 7: 7 cycle delay
 always_ff @(posedge clk) begin
-    skew[7][0] <= activation_in[7];
-    skew[7][1] <= skew[7][0];
-    skew[7][2] <= skew[7][1];
-    skew[7][3] <= skew[7][2];
-    skew[7][4] <= skew[7][3];
-    skew[7][5] <= skew[7][4];
-    skew[7][6] <= skew[7][5];
+    if (!rst_n) begin
+        skew[7][0] <= 8'sd0;
+        skew[7][1] <= 8'sd0;
+        skew[7][2] <= 8'sd0;
+        skew[7][3] <= 8'sd0;
+        skew[7][4] <= 8'sd0;
+        skew[7][5] <= 8'sd0;
+        skew[7][6] <= 8'sd0;
+    end else begin
+        skew[7][0] <= activation_in[7];
+        skew[7][1] <= skew[7][0];
+        skew[7][2] <= skew[7][1];
+        skew[7][3] <= skew[7][2];
+        skew[7][4] <= skew[7][3];
+        skew[7][5] <= skew[7][4];
+        skew[7][6] <= skew[7][5];
+    end
 end
 assign act[7][0] = skew [7][6];
 endmodule
