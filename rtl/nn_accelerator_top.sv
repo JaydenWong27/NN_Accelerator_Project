@@ -2,11 +2,11 @@ module nn_accelerator_top (
     input  logic        clk,
     input  logic        rst_n,
 
-    // Wishbone slave 
+    // Wishbone slave
     input  logic        wb_cyc,
     input  logic        wb_stb,
     input  logic        wb_we,
-    input  logic [31:0] wb_addr,
+    input  logic [11:0] wb_addr,
     input  logic [31:0] wb_dat_m2s,
     input  logic [3:0]  wb_sel,
     output logic [31:0] wb_dat_s2m,
@@ -21,12 +21,11 @@ module nn_accelerator_top (
     output logic        sdram_we_n,
     output logic [1:0]  sdram_ba,
     output logic [12:0] sdram_a,
-    inout  logic [15:0] sdram_dq
+    inout  logic [7:0]  sdram_dq
 );
 
 // reg_interface <-> control_fsm
 logic  start, soft_reset, done, busy, error;
-logic [47:0] cycle_count;
 
 // control_fsm <-> tiling_fsm
 logic tiling_start, tiling_layer_sel, tiling_done;
@@ -81,9 +80,17 @@ generate
     end
 endgenerate
 
-// rom_data stub - tie to 0 until weight_boot_rom is added
+// rom_data from weights_rom
 logic [7:0] rom_data;
-assign rom_data = 8'h0;
+
+weights_rom u_weights_rom (
+    .addr(rom_addr),
+    .data(rom_data)
+);
+
+// Requantization parameters for layer 1
+localparam logic [23:0] LAYER1_REQUANT_MULTIPLIER = 24'd2810;
+localparam logic [7:0] LAYER1_REQUANT_SHIFT = 8'd24;
 
 // Module instantiations
 reg_interface u_reg_interface (
@@ -93,7 +100,7 @@ reg_interface u_reg_interface (
     .wb_dat_s2m(wb_dat_s2m), .wb_ack(wb_ack), .wb_err(wb_err),
     .start(start), .soft_reset(soft_reset),
     .done(done), .busy(busy), .error(error),
-    .boot_done(boot_done), .cycle_count(cycle_count),
+    .boot_done(boot_done),
     .input_buf(input_buf), .output_buf(output_buf)
 );
 
@@ -102,7 +109,6 @@ control_fsm u_control_fsm (
     .start(start), .soft_reset(soft_reset),
     .tiling_done(tiling_done),
     .done(done), .busy(busy), .error(error),
-    .cycle_count(cycle_count),
     .tiling_start(tiling_start),
     .tiling_layer_sel(tiling_layer_sel),
     .relu_en()
@@ -114,6 +120,9 @@ tiling_fsm u_tiling_fsm (
     .tiling_layer_sel(tiling_layer_sel),
     .fill_done(fill_done),
     .pe_acc_out(pe_acc_out),
+    .input_buf(input_buf),
+    .layer1_requant_multiplier(LAYER1_REQUANT_MULTIPLIER),
+    .layer1_requant_shift(LAYER1_REQUANT_SHIFT),
     .tiling_done(tiling_done),
     .pe_en(pe_en),
     .pe_rst_acc(),

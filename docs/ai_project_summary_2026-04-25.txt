@@ -1,0 +1,521 @@
+NN Accelerator Project Summary for AI Consumption
+Date: 2026-04-25
+Repository: /Users/jaydenwong/Downloads/Hardware_Projects/NN_Accelerator_Project
+
+1. Project purpose
+
+This project is a small FPGA-based neural-network accelerator intended to run a 2-layer fully connected MNIST classifier in hardware. The software side trains the model in PyTorch, exports quantized INT8 weights, and provides golden-model support. The hardware side implements the inference datapath and control in SystemVerilog, with cocotb-based verification around the major RTL blocks.
+
+The design target in the supplied synthesis report is a Gowin GW2AR-18 device, part number GW2AR-LV18QN88C8/I7, which is the FPGA used on a Tang Nano 20K class board.
+
+At a high level, the intended hardware flow is:
+
+- A host writes an MNIST image into a Wishbone-mapped input buffer.
+- A boot FSM copies quantized network weights from ROM into SDRAM after reset.
+- A tiling FSM fetches weight tiles from SDRAM into a local 8x8 cache.
+- An 8x8 systolic array performs multiply-accumulate work.
+- A control FSM sequences layer 1, ReLU, and layer 2.
+- A register interface exposes status, cycle count, and output logits over Wishbone.
+
+2. Neural-network model being accelerated
+
+The model is defined in weights/train.py as a simple MNIST classifier:
+
+- Input: 784 values (flattened 28x28 grayscale image)
+- Layer 1: fully connected 784 -> 128
+- Activation: ReLU
+- Layer 2: fully connected 128 -> 10
+- Output: 10 logits
+
+This is the only floating-point stage in the project. Training is done in PyTorch, then the model is exported for integer-only hardware use.
+
+3. Weight export and quantization flow
+
+The file weights/export_weights.py converts trained floating-point parameters into INT8-compatible hardware artifacts.
+
+Key outputs:
+
+- weights/weights_all.hex
+  Flat one-byte-per-line hex dump intended for $readmemh-style loading.
+- weights/scale_factors.json
+  Contains quantization scales and layer-1 requantization metadata.
+
+The exported layout is:
+
+- FC1 weights: 784 x 128 = 100,352 bytes
+- FC2 weights: 128 x 10 = 1,280 bytes
+- FC1 biases: 128 bytes
+- FC2 biases: 10 bytes
+- Total: 101,770 bytes
+
+That total exactly matches the terminal condition in rtl/weight_boot_fsm.sv, where the boot FSM stops after byte_counter == 101769. This is strong evidence that the boot loader is intended to copy the full exported parameter image into SDRAM byte-by-byte.
+
+4. Top-level RTL architecture
+
+The hardware top is rtl/nn_accelerator_top.sv. It integrates the following major blocks:
+
+- reg_interface
+  Wishbone slave for control, status, input image writes, and output reads.
+- control_fsm
+  Global sequencing for idle, layer 1 compute, ReLU, layer 2 compute, and done.
+- tiling_fsm
+  Orchestrates tile fetches from SDRAM and accumulation across tile columns.
+- systolic_array
+  8x8 grid of processing elements.
+- sdram_controller
+  Handles SDRAM init, refresh, read bursts, and single-byte writes.
+- weight_boot_fsm
+  Copies boot image bytes from ROM into SDRAM.
+- weight_tile_cache
+  Small 64-entry local storage for one 8x8 tile of INT8 weights.
+
+Top-level external interfaces:
+
+- One clock and active-low reset
+- Wishbone slave bus
+- SDRAM physical pins
+
+5. What each RTL module currently does
+
+5.1 rtl/pe.sv
+
+This is the basic processing element. On each enabled clock:
+
+- acc_out <= acc_in + activation_in * weight
+- activation_out <= activation_in
+
+Data types:
+
+- activation_in: signed 8-bit
+- weight: signed 8-bit
+- acc_in/acc_out: signed 32-bit
+
+This is the core MAC behavior for the systolic array.
+
+5.2 rtl/systolic_array.sv
+
+This instantiates 64 PEs arranged as an 8x8 array.
+
+Important implementation details:
+
+- activation inputs are 8 parallel signed 8-bit values
+- weights are provided as a flat array of 64 signed 8-bit values
+- outputs are 64 signed 32-bit accumulators
+- each lower row gets additional pipeline delay so activations enter the array in a skewed way
+
+The skew network is manually written:
+
+- row 0: 0-cycle skew
+- row 1: 1-cycle skew
+- ...
+- row 7: 7-cycle skew
+
+This is a standard systolic-array technique so data reaches the intended MAC cells on aligned cycles.
+
+Important caveat:
+
+The PE instance currently ties acc_in and acc_out to the same acc_internal element:
+
+- .acc_in(acc_internal[i*8+j])
+- .acc_out(acc_internal[i*8+j])
+
+That means each PE is effectively feeding back its own accumulator, not receiving a partial sum from a previous PE. This is a local recurrent accumulator per PE rather than a chain of accumulations across the row or column. It may still be intentional for this architecture, but it is not a classic neighbor-to-neighbor sum propagation network.
+
+5.3 rtl/weight_tile_cache.sv
+
+This is a 64-entry register-based tile store. It loads one signed 8-bit value per write enable and continuously exposes all 64 entries on weight_out[0:63].
+
+Current implementation uses plain registers, not block RAM. That matches the synthesis result showing 0 BSRAM usage.
+
+5.4 rtl/control_fsm.sv
+
+This FSM handles top-level execution phases:
+
+- IDLE
+- LOAD_INPUT
+- LAYER1_COMPUTE
+- LAYER1_RELU
+- LAYER2_COMPUTE
+- DONE
+
+Outputs generated by the FSM:
+
+- done
+- busy
+- tiling_start
+- tiling_layer_sel
+- relu_en
+- cycle_count
+
+Behavior:
+
+- start moves IDLE -> LOAD_INPUT
+- LOAD_INPUT lasts one cycle, then moves to LAYER1_COMPUTE
+- LAYER1_COMPUTE waits for tiling_done
+- LAYER1_RELU lasts one cycle, then moves to LAYER2_COMPUTE
+- LAYER2_COMPUTE waits for tiling_done
+- DONE stays until soft_reset
+
+This is a very simple supervisory FSM. It assumes the tiling block handles most of the actual computation runtime.
+
+5.5 rtl/tiling_fsm.sv
+
+This is the main scheduler for tiled inference.
+
+State sequence:
+
+- IDLE
+- PREFETCH_TILE_0
+- COMPUTE
+- ACCUMULATE
+- SWAP_BUFFERS
+- FETCH_NEXT_TILE
+- RELU
+- DONE
+
+Key counters:
+
+- tile_col[6:0]
+- neuron_row[7:0]
+- cycle_cnt[3:0]
+
+Current intended behavior:
+
+- request one tile from SDRAM
+- wait for fill_done
+- run COMPUTE for 15 cycles
+- accumulate selected PE outputs into acc_out
+- advance tile_col
+- when all tile columns for the current row group are complete, optionally apply ReLU and advance neuron_row
+
+Layer-dependent limits:
+
+- layer 1 uses tile_col limit 97, which implies 98 tile columns
+- layer 2 uses tile_col limit 15, which implies 16 tile columns
+- neuron_row steps by 8 outputs at a time
+- layer 1 stops after reaching around 128 outputs
+- layer 2 stops after reaching the final 10-logit region
+
+Address generation:
+
+- sdram_req_addr = neuron_row * 784 + tile_col * 8
+- sdram_req_len = 8
+
+This strongly suggests tile fetches are organized as 8-byte bursts, likely one small vector or sub-tile at a time.
+
+Important caveats in the current RTL:
+
+- activation_in is always driven to zero in the combinational block.
+  This means the systolic array currently receives all-zero activations from tiling_fsm.
+- input_buf from reg_interface is not wired into tiling_fsm or systolic_array.
+  So the externally written MNIST image is currently not used by the compute datapath.
+- only pe_acc_out[i * 8] is accumulated for i in 0..7 during ACCUMULATE.
+  That means only the first column of PE results is consumed into acc_out.
+- bias handling and explicit requantization are not present in the shown hardware path.
+
+So the project is structurally a neural-network accelerator, but the current integrated datapath is still incomplete as a mathematically correct MNIST implementation.
+
+5.6 rtl/sdram_controller.sv
+
+This module performs:
+
+- SDRAM initialization
+- periodic refresh
+- activate/read/precharge sequence for reads
+- activate/write/precharge sequence for writes
+
+Observed behavior:
+
+- initialization includes wait, precharge, refresh, refresh, mode set
+- req_ready goes high when initialization is complete
+- reads return only sdram_dq[7:0]
+- writes drive dq_out = {8'h00, wr_data}
+- burst_done is asserted when burst_count reaches req_burst_len
+
+This is a simple custom SDRAM controller, not a vendor IP core.
+
+Important caveats:
+
+- the read path increments burst_count, but there is no visible increment of addr_reg during burst reads, so this is not a conventional sequential burst address generator in the RTL shown.
+- the controller reads and writes only one useful byte at a time through the low byte lane.
+- timing closure and protocol correctness have not been validated by successful place-and-route in the provided report.
+
+5.7 rtl/weight_boot_fsm.sv
+
+This FSM waits for SDRAM init, then copies a ROM image into SDRAM one byte at a time.
+
+States:
+
+- BOOT_WAIT
+- BOOT_COPY
+- BOOT_DONE
+
+Outputs:
+
+- rom_addr = byte_counter
+- wr_byte_addr = {7'h0, byte_counter}
+- wr_data = rom_data
+- wr_valid = (state == BOOT_COPY) && !wr_ready
+
+Important caveat:
+
+In rtl/nn_accelerator_top.sv, rom_data is currently tied to 8'h00:
+
+- assign rom_data = 8'h0;
+
+So in the currently integrated top-level design, the boot process writes zeros to SDRAM instead of real exported weights.
+
+5.8 rtl/reg_interface.sv
+
+This is the Wishbone-accessible register block.
+
+Functions:
+
+- writes CTRL register at offset 0x000
+  bit 0 = start pulse
+  bit 1 = soft_reset pulse
+- reads STATUS at 0x004
+  bits exposed are {boot_done, error, busy, done}
+- accepts input image writes from 0x008 to 0x314
+  784 bytes total, packed 4 pixels per 32-bit word
+- reads output buffer from 0x318 upward
+- reads cycle_count low/high at 0x338 and 0x33C
+
+Important caveat:
+
+The address map overlaps the final two output slots with cycle_count:
+
+- output_buf[0..9] nominally span 0x318..0x33C
+- but 0x338 and 0x33C are explicitly decoded as cycle_count
+
+This means only output logits 0 through 7 are externally readable through the current register map. The cocotb tests explicitly note this.
+
+6. Verification and testbench status
+
+The project includes cocotb tests in tb/.
+
+Observed focus areas:
+
+- tb/tb_pe.py
+  PE behavior tests
+- tb/systolic_array_pe.py
+  Systolic-array directed and random checks against a software expected model
+- tb/tb_control_fsm.py
+  Control FSM state and output sequencing
+- tb/tb_tiling_fsm.py
+  Tiling behavior, per-tile stepping, layer-specific completion, and ReLU behavior
+- tb/tb_weight_boot_fsm.py
+  Boot FSM verification
+- tb/tb_reg_interface.py
+  Wishbone register correctness
+- tb/tb_nn_accelerator_top.py
+  End-to-end smoke test on the integrated top
+
+The top-level cocotb wrapper tb/tb_nn_top_wrapper.sv uses a minimal SDRAM bus model:
+
+- because rom_data is tied to zero, all boot-loaded SDRAM contents are effectively zero
+- a bank of pulldowns on sdram_dq makes undriven reads resolve to zero
+- this lets the top-level smoke test verify control-path integration without requiring a storage-faithful SDRAM memory model
+
+The top-level smoke test intentionally checks plumbing, not real inference accuracy:
+
+- waits for boot_done
+- writes a deterministic input image
+- pulses start
+- waits for done
+- reads logits 0..7
+- expects all logits to be zero because the current design boots zero weights and reads back zero data
+
+This means the current verification setup is primarily proving:
+
+- FSMs make progress
+- Wishbone transactions work
+- the integrated design does not deadlock under the simplified zero-data environment
+
+It does not yet prove correct neural-network inference against trained weights.
+
+7. Synthesis report summary
+
+Source files in the provided synthesis report:
+
+- pe.sv
+- tiling_fsm.sv
+- control_fsm.sv
+- reg_interface.sv
+- sdram_controller.sv
+- weight_boot_fsm.sv
+- nn_accelerator_top.sv
+- weight_tile_cache.sv
+- systolic_array.sv
+
+Tool and target:
+
+- Tool: GowinSynthesis V1.9.11.03 Education
+- Device: GW2AR-18
+- Part: GW2AR-LV18QN88C8/I7
+- Top module: nn_accelerator_top
+- Report timestamp: Sat Apr 25 23:14:45 2026
+
+Synthesis runtime:
+
+- Total CPU time: 11 s
+- Total elapsed time: 12 s
+- Peak memory usage: 237.938 MB
+
+Resource usage summary:
+
+- I/O Port: 143
+- I/O Buf: 89
+  - IBUF: 19
+  - OBUF: 54
+  - TBUF: 8
+  - IOBUF: 8
+- Registers: 4,253
+  - DFFE: 20
+  - DFFSE: 8
+  - DFFR: 20
+  - DFFRE: 4,205
+- LUTs: 6,378
+  - LUT2: 79
+  - LUT3: 2,452
+  - LUT4: 3,847
+- ALUs: 31
+- INVs: 3
+- DSP blocks:
+  - MULT18X18: 1
+
+Resource utilization summary:
+
+- Logic: 6,412 used / 20,736 available = 31%
+  This is reported as 6,381 LUT + 31 ALU.
+- Registers: 4,253 used / 15,750 available = 28%
+- Register-as-latch: 0
+- Register-as-FF: 4,253
+- BSRAM: 0 / 46 = 0%
+
+Interpretation:
+
+- The design fits comfortably in logic and FF count at the synthesis level.
+- No block RAMs are inferred, which is consistent with the register-based tile cache and distributed storage style.
+- Only one DSP multiplier block is inferred, which implies most arithmetic is being mapped into logic rather than heavily using dedicated DSP resources.
+
+8. Timing summary from synthesis
+
+Clock summary:
+
+- Clock name: clk
+- Constraint period: 10.000 ns
+- Constraint frequency: 100.000 MHz
+
+Max frequency summary:
+
+- Reported Fmax for clk: 148.435 MHz
+- Logic level on the worst reported path: 6
+
+Interpretation:
+
+- At synthesis level, the design appears to meet a 100 MHz target with margin.
+- This is only a synthesis timing estimate, not a final post-place-and-route timing signoff.
+
+9. Critical timing-path characterization
+
+The top five reported paths all start from:
+
+- u_tiling_fsm/n116159_s0
+
+and end at:
+
+- u_sdram_controller/sdram_a_8_s0
+- u_sdram_controller/sdram_a_7_s0
+- u_sdram_controller/sdram_a_5_s0
+- u_sdram_controller/sdram_a_6_s0
+- u_sdram_controller/sdram_a_4_s0
+
+Common pattern:
+
+- launch clock: clk
+- latch clock: clk
+- logic level: 6
+- path is dominated by address-generation and address-routing logic between tiling_fsm and sdram_controller
+
+Reported slacks:
+
+- Path 1 slack: 3.263 ns
+- Path 2 slack: 3.336 ns
+- Path 3 slack: 3.369 ns
+- Path 4 slack: 3.371 ns
+- Path 5 slack: 3.442 ns
+
+Interpretation:
+
+- the longest visible combinational work is in the SDRAM request-address path
+- the path structure is consistent with ripple-style address increment/carry propagation inside the generated address math
+- synthesis timing margin is positive on all reported paths shown
+
+10. Why place-and-route fails even though synthesis succeeds
+
+The place-and-route error reported separately is:
+
+"The number(89) of ports exceeds the resource limit 53 regular I/Os and 1 RECONFIG_N I/Os of current device..."
+
+Interpretation:
+
+- Synthesis can still build an internal netlist and estimate resource usage.
+- Place-and-route fails because the final design exposes too many top-level FPGA pins for the selected device/package.
+- The reported issue is an I/O-capacity problem, not a logic-capacity problem.
+
+The top-level arrays and external interfaces likely expand into many physical ports, especially the Wishbone and SDRAM buses together. Since implementation fails before completion, there is no trustworthy post-route timing or final routed resource picture. The synthesis numbers remain useful as pre-implementation estimates.
+
+11. Current project maturity and what is actually working
+
+What is structurally implemented:
+
+- trained software model flow exists
+- quantized weight export exists
+- top-level RTL exists
+- SDRAM boot/fetch/control skeleton exists
+- Wishbone control/status path exists
+- unit and integration-style cocotb tests exist
+- synthesis runs successfully and reports moderate resource usage
+
+What is actually demonstrated end-to-end today:
+
+- zero-filled boot image can be copied through the simplified boot/write path
+- host can write the input buffer over Wishbone
+- control FSM and tiling FSM can progress to completion
+- top-level smoke test can complete without deadlock
+- synthesis can be run for architectural resource estimation
+
+What is not yet demonstrated in the current integrated design:
+
+- real weight ROM loading into SDRAM
+- real SDRAM-backed weight reads for learned parameters
+- use of input_buf pixels in the compute datapath
+- correct bias application
+- correct requantization between layers
+- external readout of all 10 logits through the register map
+- successful place-and-route on the Tang Nano 20K package without reducing I/O count
+- final hardware-verified MNIST accuracy using trained exported parameters
+
+12. Practical interpretation of the project state
+
+This repository represents a serious architectural prototype of an FPGA neural-network accelerator rather than a fully finished production-quality inference implementation.
+
+The project already includes:
+
+- a consistent software training/export flow
+- a coherent top-level hardware partitioning
+- a functioning verification scaffold
+- synthesis evidence that the internal logic footprint is reasonable for the target class of FPGA
+
+But the currently integrated hardware is still at a bring-up/prototype stage because several key datapath links are stubbed or simplified:
+
+- ROM data is tied to zero
+- activations are tied to zero inside tiling_fsm
+- only part of the systolic outputs are accumulated
+- the register map hides the final two logits
+- implementation fails on package I/O limits
+
+13. Bottom-line one-paragraph summary
+
+This project is an FPGA MNIST accelerator prototype for a Tang Nano 20K class Gowin device. It trains a 784 -> 128 -> 10 network in PyTorch, quantizes the weights to INT8, and implements a SystemVerilog architecture with a Wishbone control plane, SDRAM boot/load path, tiling FSM, 8x8 systolic array, and cocotb verification. The supplied synthesis report shows the design is moderate in size at about 31% logic and 28% registers with an estimated 148.4 MHz synthesis Fmax against a 100 MHz target, but place-and-route fails because the selected package cannot support the design's top-level I/O count. The repository therefore demonstrates architecture, verification scaffolding, and synthesis-level feasibility, while the full inference datapath and board-level implementation remain incomplete in the current checked-in RTL.

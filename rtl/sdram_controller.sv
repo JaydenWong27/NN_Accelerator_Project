@@ -19,18 +19,18 @@ module sdram_controller(
     output logic        sdram_we_n,
     output logic [1:0]  sdram_ba,
     output logic [12:0] sdram_a,
-    inout  logic [15:0] sdram_dq
+    inout  logic [7:0]  sdram_dq
 );
 
 logic [14:0] timer;
 logic [10:0] refresh_counter;
 logic [7:0]  burst_count;
-logic [15:0] dq_out;
+logic [7:0]  dq_out;
 logic        dq_oe;
 logic [23:0] addr_reg;
 logic        is_write;
 
-assign sdram_dq = dq_oe ? dq_out : 16'hZZZZ;
+assign sdram_dq = dq_oe ? dq_out : 8'hZZ;
 
 typedef enum logic [3:0] {
     INIT_WAIT,
@@ -173,7 +173,8 @@ always_ff @(posedge clk) begin
             ACTIVATE: begin
                 sdram_ras_n <= 1;
                 if (timer == 0) begin
-                    state       <= is_write ? WRITE : READ;
+                    if (is_write) state <= WRITE;
+                    else          state <= READ;
                     burst_count <= 0;
                 end else
                     timer <= timer - 1;
@@ -184,7 +185,7 @@ always_ff @(posedge clk) begin
                 sdram_we_n  <= 1;
                 sdram_ba    <= addr_reg[23:22];
                 sdram_a     <= {4'b0, addr_reg[8:0]};
-                timer       <= 15'd2;
+                timer       <= 15'd1;
                 state       <= READ_WAIT;
             end
 
@@ -198,7 +199,6 @@ always_ff @(posedge clk) begin
                     burst_count <= burst_count + 1;
                     if (burst_count >= req_burst_len - 1) begin
                         burst_done <= 1;
-                        data_valid <= 0;
                         state      <= PRECHARGE;
                         timer      <= 15'd2;
                     end
@@ -211,7 +211,7 @@ always_ff @(posedge clk) begin
                 sdram_ba    <= addr_reg[23:22];
                 sdram_a     <= {4'b0, addr_reg[8:0]};
                 dq_oe       <= 1;
-                dq_out      <= {8'h00, wr_data};
+                dq_out      <= wr_data;
                 timer       <= 15'd2;
                 state       <= WRITE_WAIT;
             end
