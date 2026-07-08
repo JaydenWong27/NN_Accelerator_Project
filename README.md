@@ -10,7 +10,8 @@ This project demonstrates end-to-end hardware acceleration of a quantized neural
 - **Quantization**: Symmetric INT8 quantization of weights and activations
 - **Hardware**: 8×8 systolic array with 64 processing elements (PEs), implemented in SystemVerilog
 - **Deployment**: Synthesizes to 31% logic utilization on Gowin GW2AR-18 FPGA
-- **Performance**: 148.4 MHz Fmax with 48% timing margin, ~50 µs inference latency
+- **Performance**: 148.4 MHz Fmax with 48% timing margin; ~5.3 ms inference latency
+  (526k cycles at 100 MHz, dominated by per-tile SDRAM fetches)
 
 ## Key Features
 
@@ -115,8 +116,9 @@ Original design used 89 I/O pins, exceeding 53-pin Tang Nano 20K limit. Optimize
    - No functional impact
 
 2. **Wishbone Address**: 32 bits → 12 bits (saves 20 pins)
-   - Register map only spans 0x000–0x33C (~4 KB)
+   - Register map only spans 0x000–0x344 (~4 KB)
    - Sufficient for all control, status, input, and output registers
+   - Logits at 0x318–0x33F; cycle counter at 0x340/0x344
 
 3. **Cycle Counter Removal**: Deleted 32-bit performance counter (saves 16 pins)
    - Profiling counter, non-critical for inference
@@ -129,6 +131,11 @@ See [IO_OPTIMIZATION.md](IO_OPTIMIZATION.md) for detailed analysis.
 ## Verification Status
 
 ### Verified (Complete)
+- **Golden-model equivalence**: full-system simulation boots weights_all.hex through
+  the boot ROM into SDRAM, runs MNIST test images end to end, and produces logits
+  that match golden_model.py bit-for-bit (tb/run_top.py)
+- Cocotb suites pass: PE (13), systolic array (21), control FSM (13), reg interface (1)
+- Icarus testbenches pass: SDRAM controller (vs behavioural model), tile cache, top-level smoke test
 - RTL synthesis: Clean, no errors or warnings
 - Resource utilization: 31% logic (6,412 LUTs), 28% registers (4,253 FFs)
 - Timing closure: Synthesis shows 148.4 MHz Fmax vs 100 MHz target
@@ -137,7 +144,6 @@ See [IO_OPTIMIZATION.md](IO_OPTIMIZATION.md) for detailed analysis.
 - Quantization correctness: INT8 rounding and saturation implemented per spec
 
 ### Pending (Not Yet Measured)
-- Cocotb testbench execution (requires cocotb installation)
 - Actual MNIST inference accuracy on hardware
 - Post-P&R timing verification (only synthesis-level timing available)
 - Physical inference latency measurement

@@ -41,6 +41,7 @@ logic signed [31:0] pe_acc_out [0:63];
 logic signed [7:0]  activation_in [0:7];
 logic signed [7:0]  weight_out [0:63];
 logic pe_en;
+logic pe_rst_acc;
 
 // tiling_fsm -> sdram_controller (read path)
 logic sdram_req_valid;
@@ -60,10 +61,15 @@ logic [7:0] wr_data;
 logic boot_done;
 logic [16:0] rom_addr;
 
-// tile cache write counter
+// tile cache write counter: counts data_valid strobes within one fill
+// (8 bursts x 8 bytes for a weight tile, 1 burst for a bias group) and
+// resets between fills so every fill starts at slot 0
+logic fill_active;
 logic [5:0] cache_wr_addr;
 always_ff @(posedge clk) begin
     if (!rst_n)
+        cache_wr_addr <= 6'h0;
+    else if (!fill_active)
         cache_wr_addr <= 6'h0;
     else if (sdram_data_valid)
         cache_wr_addr <= cache_wr_addr + 1;
@@ -73,6 +79,15 @@ end
 logic fill_done;
 assign fill_done = sdram_burst_done;
 
+// bias bytes for the active neuron group sit in cache slots 0..7
+logic signed [7:0] bias_in [0:7];
+genvar b;
+generate
+    for (b = 0; b < 8; b++) begin : bias_tap
+        assign bias_in[b] = weight_out[b];
+    end
+endgenerate
+
 // acc_out[0:9] -> output_buf for Layer 2 logits
 genvar k;
 generate
@@ -81,9 +96,15 @@ generate
     end
 endgenerate
 
-// rom_data stub - tie to 0 until weight_boot_rom is added
+// ROM image comes from the WEIGHT_ROM_FILE macro (see weight_boot_rom.sv);
+// zero-filled when the macro is not set
 logic [7:0] rom_data;
-assign rom_data = 8'h0;
+
+weight_boot_rom u_weight_boot_rom (
+    .clk(clk),
+    .addr(rom_addr),
+    .data(rom_data)
+);
 
 // Module instantiations
 reg_interface u_reg_interface (
@@ -114,20 +135,23 @@ tiling_fsm u_tiling_fsm (
     .tiling_layer_sel(tiling_layer_sel),
     .fill_done(fill_done),
     .pe_acc_out(pe_acc_out),
+    .input_buf(input_buf),
+    .bias_in(bias_in),
     .tiling_done(tiling_done),
     .pe_en(pe_en),
-    .pe_rst_acc(),
-    .swap_buffers(),
+    .pe_rst_acc(pe_rst_acc),
+    .fill_active(fill_active),
     .sdram_req_valid(sdram_req_valid),
     .sdram_req_addr(sdram_req_addr),
     .sdram_req_len(sdram_req_len),
-    .weight_sel(),
     .activation_in(activation_in),
     .acc_out(acc_out)
 );
 
+// pe_rst_acc clears the PE accumulators and skew registers between tiles;
+// the array uses synchronous reset so this is a clean 1-cycle clear
 systolic_array u_systolic_array (
-    .clk(clk), .rst_n(rst_n), .en(pe_en),
+    .clk(clk), .rst_n(rst_n & ~pe_rst_acc), .en(pe_en),
     .activation_in(activation_in),
     .weight(weight_out),
     .acc_out(pe_acc_out)
