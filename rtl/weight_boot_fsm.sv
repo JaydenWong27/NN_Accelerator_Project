@@ -1,4 +1,7 @@
-module weight_boot_fsm (
+module weight_boot_fsm #(
+    // weights_all.hex: FC1 W (100352) + FC2 W (1280) + FC1 B (128) + FC2 B (10)
+    parameter int unsigned BOOT_BYTES = 101770
+) (
     input logic clk,
     input logic rst_n,
     input logic sdram_init_done,
@@ -19,6 +22,7 @@ typedef enum logic [1:0] {
 
 state_t state;
 logic [16:0] byte_counter;
+localparam logic [16:0] LAST_BYTE = BOOT_BYTES - 1;
 
 always_ff @(posedge clk) begin
     if (!rst_n) begin
@@ -33,10 +37,10 @@ always_ff @(posedge clk) begin
         end
         BOOT_COPY: begin
             if (wr_ready) begin
-                if(byte_counter == 101769) begin
+                if(byte_counter == LAST_BYTE) begin
                     state <= BOOT_DONE;
                 end else begin
-                    byte_counter++;
+                    byte_counter <= byte_counter + 1;
                 end
             end
         end

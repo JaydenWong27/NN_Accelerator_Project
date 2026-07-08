@@ -51,7 +51,7 @@ always_ff @(posedge clk) begin
                 soft_reset <= wb_dat_m2s[1];
             end
             if (offset >= 12'h008&& offset <= 12'h314) begin
-                automatic int base_pixel;
+                int base_pixel;
                 base_pixel = (offset - 12'h008) >> 2 << 2; // divide by 4 then multiply by 4 for clearing lower 2 bits
                 if (wb_sel[0]) begin
                     input_buf[base_pixel + 0] <= wb_dat_m2s[7:0];
@@ -75,11 +75,13 @@ always_comb begin
 
     case (offset)
         12'h004: wb_dat_s2m = {28'h0, boot_done, error, busy, done};
-        12'h338: wb_dat_s2m = cycle_count[31:0];
-        12'h33C: wb_dat_s2m = {16'h0, cycle_count[47:32]};
+        // 0x318-0x33F: 10 INT32 logits. Cycle counter lives above them at
+        // 0x340/0x344 so logits 8 and 9 are not shadowed by the case items.
+        12'h340: wb_dat_s2m = cycle_count[31:0];
+        12'h344: wb_dat_s2m = {16'h0, cycle_count[47:32]};
         default: begin
-            if (offset >= 12'h318 && offset <= 12'h33C) begin
-                automatic int logit_idx;
+            if (offset >= 12'h318 && offset < 12'h340) begin
+                int logit_idx;
                 logit_idx = (offset - 12'h318) >> 2;
                 if (logit_idx < 10) begin
                     wb_dat_s2m = output_buf[logit_idx];
