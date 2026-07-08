@@ -1,6 +1,6 @@
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge
+from cocotb.triggers import RisingEdge, FallingEdge
 
 async def reset_dut(dut):
     dut.rst_n.value = 0
@@ -54,7 +54,22 @@ async def test_ctrl_start_pulse(dut):
     cocotb.start_soon(Clock(dut.clk, 10, unit="ns").start())
     await reset_dut(dut)
 
-    await wb_write(dut, 0x000, 0x1) # write start = 1
+    # sample start on falling edges (race-free: it changes on rising edges)
+    pulse_cycles = 0
 
-    #start should have pulsed - check it is now 0 
+    async def count_pulse_cycles():
+        nonlocal pulse_cycles
+        while True:
+            await FallingEdge(dut.clk)
+            if int(dut.start.value) == 1:
+                pulse_cycles += 1
+
+    monitor = cocotb.start_soon(count_pulse_cycles())
+
+    await wb_write(dut, 0x000, 0x1) # write start = 1
+    await RisingEdge(dut.clk)
+    await FallingEdge(dut.clk)
+    monitor.cancel()
+
+    assert pulse_cycles == 1, f"start should pulse exactly 1 cycle, pulsed {pulse_cycles}"
     assert int(dut.start.value) == 0, "start should be 0 after pulse"

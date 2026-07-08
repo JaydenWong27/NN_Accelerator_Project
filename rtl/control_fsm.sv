@@ -82,6 +82,7 @@ always_comb begin
         busy = 1;
     end
     LAYER2_COMPUTE:begin
+        tiling_start = 1;
         tiling_layer_sel = 1;
         busy = 1;
     end
