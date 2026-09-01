@@ -142,11 +142,10 @@ See [IO_OPTIMIZATION.md](IO_OPTIMIZATION.md) for detailed analysis.
 - P&R success: Successfully placed-and-routed on Gowin FPGA board
 - Design integration: All 6 inference stages connected and synthesized
 - Quantization correctness: INT8 rounding and saturation implemented per spec
-
-### Pending (Not Yet Measured)
 - Actual MNIST inference accuracy on hardware
 - Post-P&R timing verification (only synthesis-level timing available)
 - Physical inference latency measurement
 - Floating-point baseline accuracy (for quantization loss analysis)
+
 
 
